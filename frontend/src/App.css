@@ -1,0 +1,65 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+.App {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+main {
+  flex: 1;
+}
+
+
+.footer{
+  
+  width: 100%;
+  text-align: center;
+}
+
+
+.gallery {
+  margin: 5px;
+  border: 1px solid #ccc;
+  float: left;
+  width: 150px;
+}
+
+.gallery:hover {
+  border: 1px solid #777;
+}
+
+.gallery img {
+  width: 100%;
+  height: auto;
+  
+}
+
+.desc {
+  padding: 15px;
+  text-align: center;
+}
+.out-of-stock-container {
+  position: relative;
+  filter: grayscale(100%) brightness(60%);
+}
+
+.out-of-stock-text {
+
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-weight: bold;
+  font-size: 1.5rem;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 6px 12px;
+  border-radius: 5px;
+  pointer-events: none;
+}
