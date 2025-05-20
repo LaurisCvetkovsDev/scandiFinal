@@ -1,109 +1,77 @@
 <?php
-require_once __DIR__ . '/../models/Product.php';
-require_once __DIR__ . '/CategoryRepository.php';
-require_once __DIR__ . '/PriceRepository.php';
-require_once __DIR__ . '/GalleryRepository.php';
-require_once __DIR__ . '/AttributeRepository.php';
-require_once __DIR__ . '/AttributeItemRepository.php';
+
+namespace App\Repositories;
+
+use PDO;
+use App\Config\Database;
+use App\Entities\Product;
+use App\Repositories\PriceRepository;
+// Assuming you’ll add these repositories later
+use App\Repositories\ImageRepository;
+use App\Repositories\AttributeRepository;
+use App\Repositories\ItemRepository;
 
 class ProductRepository
 {
-    private PDO $conn;
-    private CategoryRepository $categoryRepo;
+    private PDO $db;
     private PriceRepository $priceRepo;
     private GalleryRepository $imageRepo;
     private AttributeRepository $attributeRepo;
-    private AttributeItemRepository $attributeItemRepo;
+    private AttributeItemRepository $itemRepo;
 
-    public function __construct(PDO $conn)
+    public function __construct()
     {
-        $this->conn = $conn;
-        $this->categoryRepo = new CategoryRepository($conn);
-        $this->priceRepo = new PriceRepository($conn);
-        $this->imageRepo = new GalleryRepository($conn);
-        $this->attributeRepo = new AttributeRepository($conn);
-        $this->attributeItemRepo = new AttributeItemRepository($conn);
+        $this->db = Database::getInstance();
+        $this->priceRepo = new PriceRepository();
+        $this->imageRepo = new GalleryRepository();
+        $this->attributeRepo = new AttributeRepository();
+        $this->itemRepo = new AttributeItemRepository();
     }
 
-    // Получить все товары
+    public function getById(int $id): ?Product
+    {
+        $stmt = $this->db->prepare("SELECT * FROM products WHERE id = ?");
+        $stmt->execute([$id]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($row) {
+            return new Product(
+                id: $row['id'],
+                name: $row['name'],
+                in_stock: $row['in_stock'],
+                description: $row['description'],
+                category: $row['category'],
+                brand: $row['brand'],
+                prices: $this->priceRepo->getByProductId($row['id']),
+                images: $this->imageRepo->getByProductId($row['id']),
+                attributes: $this->attributeRepo->getByProductId($row['id']),
+                items: $this->itemRepo->getByProductId($row['id'])
+            );
+        }
+
+        return null;
+    }
+
     public function getAll(): array
     {
-        $query = "SELECT * FROM products";
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute();
-
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
+        $stmt = $this->db->query("SELECT * FROM products");
         $products = [];
-        foreach ($rows as $row) {
-            $products[] = $this->buildProductData($row);
+
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $products[] = new Product(
+                id: $row['id'],
+                name: $row['name'],
+                in_stock: $row['in_stock'],
+                description: $row['description'],
+                category: $row['category'],
+                brand: $row['brand'],
+                prices: $this->priceRepo->getByProductId($row['id']),
+                images: $this->imageRepo->getByProductId($row['id']),
+                attributes: $this->attributeRepo->getByProductId($row['id']),
+                items: $this->itemRepo->getByProductId($row['id'])
+            );
         }
+
         return $products;
     }
-
-    // Найти товар по id
-    public function findById(string $id): ?array
-    {
-        $query = "SELECT * FROM products WHERE id = :id";
-        $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":id", $id);
-        $stmt->execute();
-
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$row) {
-            return null;
-        }
-
-        return $this->buildProductData($row);
-    }
-
-    // Собрать полный ProductData
-    private function buildProductData(array $row): array
-    {
-        $category = $this->categoryRepo->findByName($row['category']);
-        $prices = $this->priceRepo->findByProductId($row['id']);
-        $gallery = $this->imageRepo->findByProductId($row['id']);
-        $attributes = $this->attributeRepo->findByProductId($row['id']);
-
-        // Собрать атрибуты с их items
-        $attributeData = [];
-        foreach ($attributes as $attr) {
-            $items = $this->attributeItemRepo->findByAttrIdAndProductId($attr->attr_id, $attr->product_id);
-            $itemData = [];
-            foreach ($items as $item) {
-                $itemData[] = [
-                    'id' => $item->item_id,
-                    'value' => $item->value,
-                    'displayValue' => $item->display_value
-                ];
-            }
-
-            $attributeData[] = [
-                'name' => $attr->name,
-                'type' => $attr->type,
-                'items' => $itemData
-            ];
-        }
-
-        return [
-            'id' => $row['id'],
-            'name' => $row['name'],
-            'description' => $row['description'],
-            'inStock' => boolval($row['in_stock']),
-            'category' => $category ? ['id' => $category->id, 'name' => $category->name] : null,
-            'prices' => array_map(function ($price) {
-                return [
-                    'currencyLabel' => $price->currency_label,
-                    'currencySymbol' => $price->currency_symbol,
-                    'amount' => floatval($price->amount)
-                ];
-            }, $prices),
-            'gallery' => array_map(function ($img) {
-                return ['url' => $img->image_url];
-            }, $gallery),
-            'attributes' => $attributeData
-        ];
-    }
 }
-
-?>

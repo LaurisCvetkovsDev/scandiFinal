@@ -105,7 +105,6 @@ use GraphQL\Language\AST\VariableNode;
  * Those magic functions allow partial parsing:
  *
  * @method static NameNode name(Source|string $source, bool[] $options = [])
- * @method static DocumentNode document(Source|string $source, bool[] $options = [])
  * @method static ExecutableDefinitionNode|TypeSystemDefinitionNode definition(Source|string $source, bool[] $options = [])
  * @method static ExecutableDefinitionNode executableDefinition(Source|string $source, bool[] $options = [])
  * @method static OperationDefinitionNode operationDefinition(Source|string $source, bool[] $options = [])
@@ -170,6 +169,8 @@ use GraphQL\Language\AST\VariableNode;
  * @method static DirectiveDefinitionNode directiveDefinition(Source|string $source, bool[] $options = [])
  * @method static NodeList<NameNode> directiveLocations(Source|string $source, bool[] $options = [])
  * @method static NameNode directiveLocation(Source|string $source, bool[] $options = [])
+ *
+ * @see \GraphQL\Tests\Language\ParserTest
  */
 class Parser
 {
@@ -180,11 +181,12 @@ class Parser
      *
      * @param Source|string $source
      *
-     * @phpstan-param ParserOptions       $options
-     *
-     * @throws SyntaxError
+     * @phpstan-param ParserOptions $options
      *
      * @api
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     public static function parse($source, array $options = []): DocumentNode
     {
@@ -204,6 +206,9 @@ class Parser
      * @param Source|string $source
      *
      * @phpstan-param ParserOptions $options
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      *
      * @return BooleanValueNode|EnumValueNode|FloatValueNode|IntValueNode|ListValueNode|NullValueNode|ObjectValueNode|StringValueNode|VariableNode
      *
@@ -231,7 +236,10 @@ class Parser
      *
      * @param Source|string $source
      *
-     * @phpstan-param ParserOptions       $options
+     * @phpstan-param ParserOptions $options
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      *
      * @return ListTypeNode|NamedTypeNode|NonNullTypeNode
      *
@@ -252,6 +260,7 @@ class Parser
      *
      * @phpstan-param array{string, ParserOptions} $arguments
      *
+     * @throws \JsonException
      * @throws SyntaxError
      *
      * @return Node|NodeList<Node>
@@ -329,9 +338,7 @@ class Parser
         return null;
     }
 
-    /**
-     * Determines if the next token is of a given kind.
-     */
+    /** Determines if the next token is of a given kind. */
     private function peek(string $kind): bool
     {
         return $this->lexer->token->kind === $kind;
@@ -340,6 +347,9 @@ class Parser
     /**
      * If the next token is of the given kind, return true after advancing
      * the parser. Otherwise, do not change the parser state and return false.
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     private function skip(string $kind): bool
     {
@@ -355,6 +365,9 @@ class Parser
     /**
      * If the next token is of the given kind, return that token after advancing
      * the parser. Otherwise, do not change the parser state and return false.
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     private function expect(string $kind): Token
     {
@@ -366,26 +379,21 @@ class Parser
             return $token;
         }
 
-        throw new SyntaxError(
-            $this->lexer->source,
-            $token->start,
-            "Expected {$kind}, found {$token->getDescription()}"
-        );
+        throw new SyntaxError($this->lexer->source, $token->start, "Expected {$kind}, found {$token->getDescription()}");
     }
 
     /**
      * If the next token is a keyword with the given value, advance the lexer.
      * Otherwise, throw an error.
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     private function expectKeyword(string $value): void
     {
         $token = $this->lexer->token;
         if ($token->kind !== Token::NAME || $token->value !== $value) {
-            throw new SyntaxError(
-                $this->lexer->source,
-                $token->start,
-                "Expected \"{$value}\", found {$token->getDescription()}"
-            );
+            throw new SyntaxError($this->lexer->source, $token->start, "Expected \"{$value}\", found {$token->getDescription()}");
         }
 
         $this->lexer->advance();
@@ -394,6 +402,9 @@ class Parser
     /**
      * If the next token is a given keyword, return "true" after advancing
      * the lexer. Otherwise, do not change the parser state and return "false".
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     private function expectOptionalKeyword(string $value): bool
     {
@@ -420,6 +431,9 @@ class Parser
      * and ends with a lex token of closeKind. Advances the parser
      * to the next lex token after the closing token.
      *
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<Node>
      */
     private function any(string $openKind, callable $parseFn, string $closeKind): NodeList
@@ -444,6 +458,9 @@ class Parser
      *
      * @param callable(self): TNode $parseFn
      *
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<TNode>
      */
     private function many(string $openKind, callable $parseFn, string $closeKind): NodeList
@@ -460,6 +477,9 @@ class Parser
 
     /**
      * Converts a name lex token into a name parse node.
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     private function parseName(): NameNode
     {
@@ -473,6 +493,9 @@ class Parser
 
     /**
      * Implements the parsing rules in the Document section.
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     private function parseDocument(): DocumentNode
     {
@@ -489,6 +512,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return DefinitionNode&Node
      */
     private function parseDefinition(): DefinitionNode
@@ -527,6 +553,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return ExecutableDefinitionNode&Node
      */
     private function parseExecutableDefinition(): ExecutableDefinitionNode
@@ -551,7 +580,8 @@ class Parser
     // Implements the parsing rules in the Operations section.
 
     /**
-     * @return OperationDefinitionNode&Node
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     private function parseOperationDefinition(): OperationDefinitionNode
     {
@@ -584,6 +614,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseOperationType(): string
     {
         $operationToken = $this->expect(Token::NAME);
@@ -602,6 +636,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<VariableDefinitionNode>
      */
     private function parseVariableDefinitions(): NodeList
@@ -615,6 +652,10 @@ class Parser
             : new NodeList([]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseVariableDefinition(): VariableDefinitionNode
     {
         $start = $this->lexer->token;
@@ -634,6 +675,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseVariable(): VariableNode
     {
         $start = $this->lexer->token;
@@ -645,6 +690,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseSelectionSet(): SelectionSetNode
     {
         $start = $this->lexer->token;
@@ -662,6 +711,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return SelectionNode&Node
      */
     private function parseSelection(): SelectionNode
@@ -671,6 +723,10 @@ class Parser
             : $this->parseField();
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseField(): FieldNode
     {
         $start = $this->lexer->token;
@@ -695,6 +751,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<ArgumentNode>
      */
     private function parseArguments(bool $isConst): NodeList
@@ -708,6 +767,10 @@ class Parser
             : new NodeList([]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseArgument(): ArgumentNode
     {
         $start = $this->lexer->token;
@@ -723,6 +786,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseConstArgument(): ArgumentNode
     {
         $start = $this->lexer->token;
@@ -741,6 +808,9 @@ class Parser
     // Implements the parsing rules in the Fragments section.
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return FragmentSpreadNode|InlineFragmentNode
      */
     private function parseFragment(): SelectionNode
@@ -765,6 +835,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseFragmentDefinition(): FragmentDefinitionNode
     {
         $start = $this->lexer->token;
@@ -792,6 +866,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseFragmentName(): NameNode
     {
         if ($this->lexer->token->value === 'on') {
@@ -820,6 +898,9 @@ class Parser
      * NullValue : `null`
      *
      * EnumValue : Name but not `true`, `false` or `null`
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      *
      * @return BooleanValueNode|EnumValueNode|FloatValueNode|IntValueNode|StringValueNode|VariableNode|ListValueNode|ObjectValueNode|NullValueNode
      */
@@ -888,6 +969,10 @@ class Parser
         throw $this->unexpected();
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseStringLiteral(): StringValueNode
     {
         $token = $this->lexer->token;
@@ -900,16 +985,28 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseConstValue(): ValueNode
     {
         return $this->parseValueLiteral(true);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseVariableValue(): ValueNode
     {
         return $this->parseValueLiteral(false);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseArray(bool $isConst): ListValueNode
     {
         $start = $this->lexer->token;
@@ -923,6 +1020,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseObject(bool $isConst): ObjectValueNode
     {
         $start = $this->lexer->token;
@@ -938,6 +1039,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseObjectField(bool $isConst): ObjectFieldNode
     {
         $start = $this->lexer->token;
@@ -955,6 +1060,9 @@ class Parser
     // Implements the parsing rules in the Directives section.
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<DirectiveNode>
      */
     private function parseDirectives(bool $isConst): NodeList
@@ -967,6 +1075,10 @@ class Parser
         return new NodeList($directives);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseDirective(bool $isConst): DirectiveNode
     {
         $start = $this->lexer->token;
@@ -983,6 +1095,9 @@ class Parser
 
     /**
      * Handles the Type: TypeName, ListType, and NonNullType parsing rules.
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      *
      * @return ListTypeNode|NamedTypeNode|NonNullTypeNode
      */
@@ -1011,6 +1126,10 @@ class Parser
         return $type;
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseNamedType(): NamedTypeNode
     {
         $start = $this->lexer->token;
@@ -1024,6 +1143,9 @@ class Parser
     // Implements the parsing rules in the Type Definition section.
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return TypeSystemDefinitionNode&Node
      */
     private function parseTypeSystemDefinition(): TypeSystemDefinitionNode
@@ -1069,6 +1191,10 @@ class Parser
         return $this->peek(Token::STRING) || $this->peek(Token::BLOCK_STRING);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseDescription(): ?StringValueNode
     {
         if ($this->peekDescription()) {
@@ -1078,6 +1204,10 @@ class Parser
         return null;
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseSchemaDefinition(): SchemaDefinitionNode
     {
         $start = $this->lexer->token;
@@ -1097,6 +1227,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseOperationTypeDefinition(): OperationTypeDefinitionNode
     {
         $start = $this->lexer->token;
@@ -1111,6 +1245,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseScalarTypeDefinition(): ScalarTypeDefinitionNode
     {
         $start = $this->lexer->token;
@@ -1127,6 +1265,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseObjectTypeDefinition(): ObjectTypeDefinitionNode
     {
         $start = $this->lexer->token;
@@ -1148,6 +1290,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<NamedTypeNode>
      */
     private function parseImplementsInterfaces(): NodeList
@@ -1169,6 +1314,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<FieldDefinitionNode>
      */
     private function parseFieldsDefinition(): NodeList
@@ -1198,6 +1346,10 @@ class Parser
         return $nodeList;
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseFieldDefinition(): FieldDefinitionNode
     {
         $start = $this->lexer->token;
@@ -1219,6 +1371,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<InputValueDefinitionNode>
      */
     private function parseArgumentsDefinition(): NodeList
@@ -1232,6 +1387,10 @@ class Parser
             : new NodeList([]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseInputValueDefinition(): InputValueDefinitionNode
     {
         $start = $this->lexer->token;
@@ -1256,6 +1415,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseInterfaceTypeDefinition(): InterfaceTypeDefinitionNode
     {
         $start = $this->lexer->token;
@@ -1279,6 +1442,9 @@ class Parser
     /**
      * UnionTypeDefinition :
      *   - Description? union Name Directives[Const]? UnionMemberTypes?
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     private function parseUnionTypeDefinition(): UnionTypeDefinitionNode
     {
@@ -1299,6 +1465,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<NamedTypeNode>
      */
     private function parseUnionMemberTypes(): NodeList
@@ -1315,6 +1484,10 @@ class Parser
         return new NodeList($types);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseEnumTypeDefinition(): EnumTypeDefinitionNode
     {
         $start = $this->lexer->token;
@@ -1334,6 +1507,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<EnumValueDefinitionNode>
      */
     private function parseEnumValuesDefinition(): NodeList
@@ -1347,6 +1523,10 @@ class Parser
             : new NodeList([]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseEnumValueDefinition(): EnumValueDefinitionNode
     {
         $start = $this->lexer->token;
@@ -1362,6 +1542,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseInputObjectTypeDefinition(): InputObjectTypeDefinitionNode
     {
         $start = $this->lexer->token;
@@ -1381,6 +1565,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<InputValueDefinitionNode>
      */
     private function parseInputFieldsDefinition(): NodeList
@@ -1395,6 +1582,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return TypeSystemExtensionNode&Node
      */
     private function parseTypeSystemExtension(): TypeSystemExtensionNode
@@ -1429,6 +1619,10 @@ class Parser
         throw $this->unexpected($keywordToken);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseSchemaTypeExtension(): SchemaExtensionNode
     {
         $start = $this->lexer->token;
@@ -1443,7 +1637,7 @@ class Parser
                 Token::BRACE_R
             )
             : new NodeList([]);
-        if (\count($directives) === 0 && \count($operationTypes) === 0) {
+        if (count($directives) === 0 && count($operationTypes) === 0) {
             $this->unexpected();
         }
 
@@ -1454,6 +1648,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseScalarTypeExtension(): ScalarTypeExtensionNode
     {
         $start = $this->lexer->token;
@@ -1461,7 +1659,7 @@ class Parser
         $this->expectKeyword('scalar');
         $name = $this->parseName();
         $directives = $this->parseDirectives(true);
-        if (\count($directives) === 0) {
+        if (count($directives) === 0) {
             throw $this->unexpected();
         }
 
@@ -1472,6 +1670,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseObjectTypeExtension(): ObjectTypeExtensionNode
     {
         $start = $this->lexer->token;
@@ -1483,9 +1685,9 @@ class Parser
         $fields = $this->parseFieldsDefinition();
 
         if (
-            \count($interfaces) === 0
-            && \count($directives) === 0
-            && \count($fields) === 0
+            count($interfaces) === 0
+            && count($directives) === 0
+            && count($fields) === 0
         ) {
             throw $this->unexpected();
         }
@@ -1499,6 +1701,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseInterfaceTypeExtension(): InterfaceTypeExtensionNode
     {
         $start = $this->lexer->token;
@@ -1509,9 +1715,9 @@ class Parser
         $directives = $this->parseDirectives(true);
         $fields = $this->parseFieldsDefinition();
         if (
-            \count($interfaces) === 0
-            && \count($directives) === 0
-            && \count($fields) === 0
+            count($interfaces) === 0
+            && count($directives) === 0
+            && count($fields) === 0
         ) {
             throw $this->unexpected();
         }
@@ -1529,6 +1735,9 @@ class Parser
      * UnionTypeExtension :
      *   - extend union Name Directives[Const]? UnionMemberTypes
      *   - extend union Name Directives[Const].
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     private function parseUnionTypeExtension(): UnionTypeExtensionNode
     {
@@ -1538,7 +1747,7 @@ class Parser
         $name = $this->parseName();
         $directives = $this->parseDirectives(true);
         $types = $this->parseUnionMemberTypes();
-        if (\count($directives) === 0 && \count($types) === 0) {
+        if (count($directives) === 0 && count($types) === 0) {
             throw $this->unexpected();
         }
 
@@ -1550,6 +1759,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseEnumTypeExtension(): EnumTypeExtensionNode
     {
         $start = $this->lexer->token;
@@ -1559,8 +1772,8 @@ class Parser
         $directives = $this->parseDirectives(true);
         $values = $this->parseEnumValuesDefinition();
         if (
-            \count($directives) === 0
-            && \count($values) === 0
+            count($directives) === 0
+            && count($values) === 0
         ) {
             throw $this->unexpected();
         }
@@ -1573,6 +1786,10 @@ class Parser
         ]);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseInputObjectTypeExtension(): InputObjectTypeExtensionNode
     {
         $start = $this->lexer->token;
@@ -1582,8 +1799,8 @@ class Parser
         $directives = $this->parseDirectives(true);
         $fields = $this->parseInputFieldsDefinition();
         if (
-            \count($directives) === 0
-            && \count($fields) === 0
+            count($directives) === 0
+            && count($fields) === 0
         ) {
             throw $this->unexpected();
         }
@@ -1599,6 +1816,9 @@ class Parser
     /**
      * DirectiveDefinition :
      *   - Description? directive @ Name ArgumentsDefinition? `repeatable`? on DirectiveLocations.
+     *
+     * @throws \JsonException
+     * @throws SyntaxError
      */
     private function parseDirectiveDefinition(): DirectiveDefinitionNode
     {
@@ -1623,6 +1843,9 @@ class Parser
     }
 
     /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     *
      * @return NodeList<NameNode>
      */
     private function parseDirectiveLocations(): NodeList
@@ -1637,6 +1860,10 @@ class Parser
         return new NodeList($locations);
     }
 
+    /**
+     * @throws \JsonException
+     * @throws SyntaxError
+     */
     private function parseDirectiveLocation(): NameNode
     {
         $start = $this->lexer->token;

@@ -1,35 +1,37 @@
 <?php
-require_once __DIR__ . '/../models/Attributes.php';
+
+namespace App\Repositories;
+
+use App\Config\Database;
+use App\Entities\Attributes;
+use PDO;
 
 class AttributeRepository
 {
-    private PDO $conn;
+    private PDO $db;
 
-    public function __construct(PDO $conn)
+    public function __construct()
     {
-        $this->conn = $conn;
+        $this->db = Database::getInstance();
     }
 
-    public function findByProductId(string $productId): array
+    public function getByProductId(int $productId): array
     {
-        $stmt = $this->conn->prepare("SELECT * FROM product_attributes WHERE product_id = ?");
+        $stmt = $this->db->prepare("SELECT * FROM product_attributes WHERE product_id = ?");
         $stmt->execute([$productId]);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $attributes = [];
-        foreach ($rows as $row) {
+        $prices = [];
+
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $attributes[] = new Attributes(
-                $row['product_id'],
-                $row['id'],
-                $row['attr_id'],
-                $row['name'],
-                $row['type']
+                product_id: $row['product_id'],
+                id: $row['id'],
+                attr_id: $row['attr_id'],
+                name: $row['name'],
+                type: $row['type']
             );
         }
+
         return $attributes;
     }
 }
-
-
-
-?>

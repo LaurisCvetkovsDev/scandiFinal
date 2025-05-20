@@ -3,7 +3,10 @@
 This is the primary facade for fulfilling GraphQL operations.
 See [related documentation](executing-queries.md).
 
+@phpstan-import-type ArgsMapper from Executor
 @phpstan-import-type FieldResolver from Executor
+
+@see \GraphQL\Tests\GraphQLTest
 
 ### GraphQL\GraphQL Methods
 
@@ -29,6 +32,9 @@ See [related documentation](executing-queries.md).
  *    field arguments. It is used to pass shared information useful at any point
  *    during executing this query, for example the currently logged in user and
  *    connections to databases or other services.
+ *    If the passed object implements the `ScopedContext` interface,
+ *    its `clone()` method will be called before passing the context down to a field.
+ *    This allows passing information to child fields in the query tree without affecting sibling or parent fields.
  * variableValues:
  *    A mapping of variable name to runtime value to use for all variables
  *    defined in the requestString.
@@ -45,13 +51,16 @@ See [related documentation](executing-queries.md).
  *    Empty array would allow to skip query validation (may be convenient for persisted
  *    queries which are validated before persisting and assumed valid during execution)
  *
- * @param string|DocumentNode        $source
- * @param mixed                      $rootValue
- * @param mixed                      $contextValue
- * @param array<string, mixed>|null  $variableValues
+ * @param string|DocumentNode $source
+ * @param mixed $rootValue
+ * @param mixed $contextValue
+ * @param array<string, mixed>|null $variableValues
  * @param array<ValidationRule>|null $validationRules
  *
  * @api
+ *
+ * @throws \Exception
+ * @throws InvariantViolation
  */
 static function executeQuery(
     GraphQL\Type\Schema $schema,
@@ -70,13 +79,15 @@ static function executeQuery(
  * Same as executeQuery(), but requires PromiseAdapter and always returns a Promise.
  * Useful for Async PHP platforms.
  *
- * @param string|DocumentNode        $source
- * @param mixed                      $rootValue
- * @param mixed                      $context
- * @param array<string, mixed>|null  $variableValues
- * @param array<ValidationRule>|null $validationRules
+ * @param string|DocumentNode $source
+ * @param mixed $rootValue
+ * @param mixed $context
+ * @param array<string, mixed>|null $variableValues
+ * @param array<ValidationRule>|null $validationRules Defaults to using all available rules
  *
  * @api
+ *
+ * @throws \Exception
  */
 static function promiseToExecute(
     GraphQL\Executor\Promise\PromiseAdapter $promiseAdapter,
@@ -95,6 +106,8 @@ static function promiseToExecute(
 /**
  * Returns directives defined in GraphQL spec.
  *
+ * @throws InvariantViolation
+ *
  * @return array<string, Directive>
  *
  * @api
@@ -105,6 +118,8 @@ static function getStandardDirectives(): array
 ```php
 /**
  * Returns types defined in GraphQL spec.
+ *
+ * @throws InvariantViolation
  *
  * @return array<string, ScalarType>
  *
@@ -122,6 +137,8 @@ static function getStandardTypes(): array
  * @param array<string, ScalarType> $types
  *
  * @api
+ *
+ * @throws InvariantViolation
  */
 static function overrideStandardTypes(array $types): void
 ```
@@ -148,6 +165,17 @@ static function getStandardValidationRules(): array
 static function setDefaultFieldResolver(callable $fn): void
 ```
 
+```php
+/**
+ * Set default args mapper implementation.
+ *
+ * @phpstan-param ArgsMapper $fn
+ *
+ * @api
+ */
+static function setDefaultArgsMapper(callable $fn): void
+```
+
 ## GraphQL\Type\Definition\Type
 
 Registry of standard GraphQL types and base class for all other types.
@@ -157,6 +185,8 @@ Registry of standard GraphQL types and base class for all other types.
 ```php
 /**
  * @api
+ *
+ * @throws InvariantViolation
  */
 static function int(): GraphQL\Type\Definition\ScalarType
 ```
@@ -164,6 +194,8 @@ static function int(): GraphQL\Type\Definition\ScalarType
 ```php
 /**
  * @api
+ *
+ * @throws InvariantViolation
  */
 static function float(): GraphQL\Type\Definition\ScalarType
 ```
@@ -171,6 +203,8 @@ static function float(): GraphQL\Type\Definition\ScalarType
 ```php
 /**
  * @api
+ *
+ * @throws InvariantViolation
  */
 static function string(): GraphQL\Type\Definition\ScalarType
 ```
@@ -178,6 +212,8 @@ static function string(): GraphQL\Type\Definition\ScalarType
 ```php
 /**
  * @api
+ *
+ * @throws InvariantViolation
  */
 static function boolean(): GraphQL\Type\Definition\ScalarType
 ```
@@ -185,6 +221,8 @@ static function boolean(): GraphQL\Type\Definition\ScalarType
 ```php
 /**
  * @api
+ *
+ * @throws InvariantViolation
  */
 static function id(): GraphQL\Type\Definition\ScalarType
 ```
@@ -282,7 +320,7 @@ Passed as 4th argument to every field resolver. See [docs on field resolving (da
 
 @phpstan-import-type QueryPlanOptions from QueryPlan
 
-@phpstan-type Path array<int, string|int>
+@phpstan-type Path list<string|int>
 
 ### GraphQL\Type\Definition\ResolveInfo Props
 
@@ -325,15 +363,26 @@ public $fieldNodes;
 public $parentType;
 
 /**
- * Path to this field from the very root value.
+ * Path to this field from the very root value. When fields are aliased, the path includes aliases.
  *
  * @api
  *
- * @var array<int, string|int>
+ * @var list<string|int>
  *
  * @phpstan-var Path
  */
 public $path;
+
+/**
+ * Path to this field from the very root value. This will never include aliases.
+ *
+ * @api
+ *
+ * @var list<string|int>
+ *
+ * @phpstan-var Path
+ */
+public $unaliasedPath;
 
 /**
  * Instance of a schema used for execution.
@@ -381,43 +430,171 @@ public $variableValues;
 
 ```php
 /**
- * Helper method that returns names of all fields selected in query for
- * $this->fieldName up to $depth levels.
+ * Returns names of all fields selected in query for `$this->fieldName` up to `$depth` levels.
  *
  * Example:
- * query MyQuery{
  * {
  *   root {
- *     id,
+ *     id
  *     nested {
- *      nested1
- *      nested2 {
- *        nested3
- *      }
+ *       nested1
+ *       nested2 {
+ *         nested3
+ *       }
  *     }
  *   }
  * }
  *
- * Given this ResolveInfo instance is a part of "root" field resolution, and $depth === 1,
- * method will return:
+ * Given this ResolveInfo instance is a part of root field resolution, and $depth === 1,
+ * this method will return:
  * [
  *     'id' => true,
  *     'nested' => [
- *         nested1 => true,
- *         nested2 => true
- *     ]
+ *         'nested1' => true,
+ *         'nested2' => true,
+ *     ],
  * ]
  *
- * Warning: this method it is a naive implementation which does not take into account
- * conditional typed fragments. So use it with care for fields of interface and union types.
+ * This method does not consider conditional typed fragments.
+ * Use it with care for fields of interface and union types.
  *
- * @param int $depth How many levels to include in output
+ * @param int $depth How many levels to include in the output beyond the first
  *
  * @return array<string, mixed>
  *
  * @api
  */
 function getFieldSelection(int $depth = 0): array
+```
+
+```php
+/**
+ * Returns names and args of all fields selected in query for `$this->fieldName` up to `$depth` levels, including aliases.
+ *
+ * The result maps original field names to a map of selections for that field, including aliases.
+ * For each of those selections, you can find the following keys:
+ * - "args" contains the passed arguments for this field/alias (not on an union inline fragment)
+ * - "type" contains the related Type instance found (will be the same for all aliases of a field)
+ * - "selectionSet" contains potential nested fields of this field/alias (only on ObjectType). The structure is recursive from here.
+ * - "unions" contains potential object types contained in an UnionType (only on UnionType). The structure is recursive from here and will go through the selectionSet of the object types.
+ *
+ * Example:
+ * {
+ *   root {
+ *     id
+ *     nested {
+ *      nested1(myArg: 1)
+ *      nested1Bis: nested1
+ *     }
+ *     alias1: nested {
+ *       nested1(myArg: 2, mySecondAg: "test")
+ *     }
+ *     myUnion(myArg: 3) {
+ *       ...on Nested {
+ *         nested1(myArg: 4)
+ *       }
+ *       ...on MyCustomObject {
+ *         nested3
+ *       }
+ *     }
+ *   }
+ * }
+ *
+ * Given this ResolveInfo instance is a part of root field resolution,
+ * $depth === 1,
+ * and fields "nested" represents an ObjectType named "Nested",
+ * this method will return:
+ * [
+ *     'id' => [
+ *         'id' => [
+ *              'args' => [],
+ *              'type' => GraphQL\Type\Definition\IntType Object ( ... )),
+ *         ],
+ *     ],
+ *     'nested' => [
+ *         'nested' => [
+ *             'args' => [],
+ *             'type' => GraphQL\Type\Definition\ObjectType Object ( ... )),
+ *             'selectionSet' => [
+ *                 'nested1' => [
+ *                     'nested1' => [
+ *                          'args' => [
+ *                              'myArg' => 1,
+ *                          ],
+ *                          'type' => GraphQL\Type\Definition\StringType Object ( ... )),
+ *                      ],
+ *                      'nested1Bis' => [
+ *                          'args' => [],
+ *                          'type' => GraphQL\Type\Definition\StringType Object ( ... )),
+ *                      ],
+ *                 ],
+ *             ],
+ *         ],
+ *     ],
+ *     'alias1' => [
+ *         'alias1' => [
+ *             'args' => [],
+ *             'type' => GraphQL\Type\Definition\ObjectType Object ( ... )),
+ *             'selectionSet' => [
+ *                 'nested1' => [
+ *                     'nested1' => [
+ *                          'args' => [
+ *                              'myArg' => 2,
+ *                              'mySecondAg' => "test",
+ *                          ],
+ *                          'type' => GraphQL\Type\Definition\StringType Object ( ... )),
+ *                      ],
+ *                 ],
+ *             ],
+ *         ],
+ *     ],
+ *     'myUnion' => [
+ *         'myUnion' => [
+ *              'args' => [
+ *                  'myArg' => 3,
+ *              ],
+ *              'type' => GraphQL\Type\Definition\UnionType Object ( ... )),
+ *              'unions' => [
+ *                  'Nested' => [
+ *                      'type' => GraphQL\Type\Definition\ObjectType Object ( ... )),
+ *                      'selectionSet' => [
+ *                          'nested1' => [
+ *                              'nested1' => [
+ *                                  'args' => [
+ *                                      'myArg' => 4,
+ *                                  ],
+ *                                  'type' => GraphQL\Type\Definition\StringType Object ( ... )),
+ *                              ],
+ *                          ],
+ *                      ],
+ *                  ],
+ *                  'MyCustomObject' => [
+ *                       'type' => GraphQL\Tests\Type\TestClasses\MyCustomType Object ( ... )),
+ *                       'selectionSet' => [
+ *                           'nested3' => [
+ *                               'nested3' => [
+ *                                   'args' => [],
+ *                                   'type' => GraphQL\Type\Definition\StringType Object ( ... )),
+ *                               ],
+ *                           ],
+ *                       ],
+ *                   ],
+ *              ],
+ *          ],
+ *      ],
+ * ]
+ *
+ * @param int $depth How many levels to include in the output beyond the first
+ *
+ * @throws \Exception
+ * @throws Error
+ * @throws InvariantViolation
+ *
+ * @return array<string, mixed>
+ *
+ * @api
+ */
+function getFieldSelectionWithAliases(int $depth = 0): array
 ```
 
 ## GraphQL\Language\DirectiveLocation
@@ -509,12 +686,13 @@ Usage example:
 
 @see Type, NamedType
 
+@phpstan-type MaybeLazyObjectType ObjectType|(callable(): (ObjectType|null))|null
 @phpstan-type TypeLoader callable(string $typeName): ((Type&NamedType)|null)
-@phpstan-type Types iterable<Type&NamedType>|(callable(): iterable<Type&NamedType>)
+@phpstan-type Types iterable<Type&NamedType>|(callable(): iterable<Type&NamedType>)|iterable<(callable(): Type&NamedType)>|(callable(): iterable<(callable(): Type&NamedType)>)
 @phpstan-type SchemaConfigOptions array{
-query?: ObjectType|null,
-mutation?: ObjectType|null,
-subscription?: ObjectType|null,
+query?: MaybeLazyObjectType,
+mutation?: MaybeLazyObjectType,
+subscription?: MaybeLazyObjectType,
 types?: Types|null,
 directives?: array<Directive>|null,
 typeLoader?: TypeLoader|null,
@@ -532,6 +710,8 @@ extensionASTNodes?: array<SchemaExtensionNode>|null,
  *
  * @phpstan-param SchemaConfigOptions $options
  *
+ * @throws InvariantViolation
+ *
  * @api
  */
 static function create(array $options = []): self
@@ -539,44 +719,62 @@ static function create(array $options = []): self
 
 ```php
 /**
+ * @return MaybeLazyObjectType
+ *
  * @api
  */
-function getQuery(): ?GraphQL\Type\Definition\ObjectType
+function getQuery()
 ```
 
 ```php
 /**
+ * @param MaybeLazyObjectType $query
+ *
+ * @throws InvariantViolation
+ *
  * @api
  */
-function setQuery(?GraphQL\Type\Definition\ObjectType $query): self
+function setQuery($query): self
 ```
 
 ```php
 /**
+ * @return MaybeLazyObjectType
+ *
  * @api
  */
-function getMutation(): ?GraphQL\Type\Definition\ObjectType
+function getMutation()
 ```
 
 ```php
 /**
+ * @param MaybeLazyObjectType $mutation
+ *
+ * @throws InvariantViolation
+ *
  * @api
  */
-function setMutation(?GraphQL\Type\Definition\ObjectType $mutation): self
+function setMutation($mutation): self
 ```
 
 ```php
 /**
+ * @return MaybeLazyObjectType
+ *
  * @api
  */
-function getSubscription(): ?GraphQL\Type\Definition\ObjectType
+function getSubscription()
 ```
 
 ```php
 /**
+ * @param MaybeLazyObjectType $subscription
+ *
+ * @throws InvariantViolation
+ *
  * @api
  */
-function setSubscription(?GraphQL\Type\Definition\ObjectType $subscription): self
+function setSubscription($subscription): self
 ```
 
 ```php
@@ -663,6 +861,8 @@ Or using Schema Config instance:
 @phpstan-import-type SchemaConfigOptions from SchemaConfig
 @phpstan-import-type OperationType from OperationDefinitionNode
 
+@see \GraphQL\Tests\Type\SchemaTest
+
 ### GraphQL\Type\Schema Methods
 
 ```php
@@ -670,6 +870,8 @@ Or using Schema Config instance:
  * @param SchemaConfig|array<string, mixed> $config
  *
  * @phpstan-param SchemaConfig|SchemaConfigOptions $config
+ *
+ * @throws InvariantViolation
  *
  * @api
  */
@@ -682,6 +884,8 @@ function __construct($config)
  *
  * This operation requires a full schema scan. Do not use in production environment.
  *
+ * @throws InvariantViolation
+ *
  * @return array<string, Type&NamedType> Keys represent type names, values are instances of corresponding type definitions
  *
  * @api
@@ -692,6 +896,8 @@ function getTypeMap(): array
 ```php
 /**
  * Returns a list of directives supported by this schema.
+ *
+ * @throws InvariantViolation
  *
  * @return array<Directive>
  *
@@ -729,14 +935,9 @@ function getSubscriptionType(): ?GraphQL\Type\Definition\ObjectType
 
 ```php
 /**
- * @api
- */
-function getConfig(): GraphQL\Type\SchemaConfig
-```
-
-```php
-/**
  * Returns a type by name.
+ *
+ * @throws InvariantViolation
  *
  * @return (Type&NamedType)|null
  *
@@ -754,6 +955,8 @@ function getType(string $name): ?GraphQL\Type\Definition\Type
  *
  * @param AbstractType&Type $abstractType
  *
+ * @throws InvariantViolation
+ *
  * @return array<ObjectType>
  *
  * @api
@@ -768,6 +971,8 @@ function getPossibleTypes(GraphQL\Type\Definition\AbstractType $abstractType): a
  * This operation requires full schema scan. Do not use in production environment.
  *
  * @api
+ *
+ * @throws InvariantViolation
  */
 function getImplementations(GraphQL\Type\Definition\InterfaceType $abstractType): GraphQL\Utils\InterfaceImplementations
 ```
@@ -780,6 +985,8 @@ function getImplementations(GraphQL\Type\Definition\InterfaceType $abstractType)
  * @param ImplementingType&Type $maybeSubType
  *
  * @api
+ *
+ * @throws InvariantViolation
  */
 function isSubType(
     GraphQL\Type\Definition\AbstractType $abstractType,
@@ -792,6 +999,8 @@ function isSubType(
  * Returns instance of directive by name.
  *
  * @api
+ *
+ * @throws InvariantViolation
  */
 function getDirective(string $name): ?GraphQL\Type\Definition\Directive
 ```
@@ -802,6 +1011,7 @@ function getDirective(string $name): ?GraphQL\Type\Definition\Directive
  *
  * This operation requires a full schema scan. Do not use in production environment.
  *
+ * @throws Error
  * @throws InvariantViolation
  *
  * @api
@@ -814,6 +1024,8 @@ function assertValid(): void
  * Validate the schema and return any errors.
  *
  * This operation requires a full schema scan. Do not use in production environment.
+ *
+ * @throws InvariantViolation
  *
  * @return array<int, Error>
  *
@@ -870,7 +1082,6 @@ future.)
 Those magic functions allow partial parsing:
 
 @method static NameNode name(Source|string $source, bool[] $options = [])
-@method static DocumentNode document(Source|string $source, bool[] $options = [])
 @method static ExecutableDefinitionNode|TypeSystemDefinitionNode definition(Source|string $source, bool[] $options = [])
 @method static ExecutableDefinitionNode executableDefinition(Source|string $source, bool[] $options = [])
 @method static OperationDefinitionNode operationDefinition(Source|string $source, bool[] $options = [])
@@ -936,6 +1147,8 @@ Those magic functions allow partial parsing:
 @method static NodeList<NameNode> directiveLocations(Source|string $source, bool[] $options = [])
 @method static NameNode directiveLocation(Source|string $source, bool[] $options = [])
 
+@see \GraphQL\Tests\Language\ParserTest
+
 ### GraphQL\Language\Parser Methods
 
 ```php
@@ -946,11 +1159,12 @@ Those magic functions allow partial parsing:
  *
  * @param Source|string $source
  *
- * @phpstan-param ParserOptions       $options
- *
- * @throws SyntaxError
+ * @phpstan-param ParserOptions $options
  *
  * @api
+ *
+ * @throws \JsonException
+ * @throws SyntaxError
  */
 static function parse($source, array $options = []): GraphQL\Language\AST\DocumentNode
 ```
@@ -969,6 +1183,9 @@ static function parse($source, array $options = []): GraphQL\Language\AST\Docume
  * @param Source|string $source
  *
  * @phpstan-param ParserOptions $options
+ *
+ * @throws \JsonException
+ * @throws SyntaxError
  *
  * @return BooleanValueNode|EnumValueNode|FloatValueNode|IntValueNode|ListValueNode|NullValueNode|ObjectValueNode|StringValueNode|VariableNode
  *
@@ -990,7 +1207,10 @@ static function parseValue($source, array $options = [])
  *
  * @param Source|string $source
  *
- * @phpstan-param ParserOptions       $options
+ * @phpstan-param ParserOptions $options
+ *
+ * @throws \JsonException
+ * @throws SyntaxError
  *
  * @return ListTypeNode|NamedTypeNode|NonNullTypeNode
  *
@@ -1011,6 +1231,8 @@ $query = 'query myQuery {someField}';
 $ast = GraphQL\Language\Parser::parse($query);
 $printed = GraphQL\Language\Printer::doPrint($ast);
 ```
+
+@see \GraphQL\Tests\Language\PrinterTest
 
 ### GraphQL\Language\Printer Methods
 
@@ -1111,6 +1333,8 @@ visitor API:
 @phpstan-type NodeVisitor callable(Node): (VisitorOperation|null|false|void)
 @phpstan-type VisitorArray array<string, NodeVisitor>|array<string, array<string, NodeVisitor>>
 
+@see \GraphQL\Tests\Language\VisitorTest
+
 ### GraphQL\Language\Visitor Methods
 
 ```php
@@ -1120,6 +1344,8 @@ visitor API:
  * @param NodeList<Node>|Node $root
  * @param VisitorArray $visitor
  * @param array<string, mixed>|null $keyMap
+ *
+ * @throws \Exception
  *
  * @return mixed
  *
@@ -1255,8 +1481,11 @@ const CLASS_MAP = [
 
 Implements the "Evaluating requests" section of the GraphQL specification.
 
+@phpstan-type ArgsMapper callable(array<string, mixed>, FieldDefinition, FieldNode, mixed): mixed
 @phpstan-type FieldResolver callable(mixed, array<string, mixed>, mixed, ResolveInfo): mixed
-@phpstan-type ImplementationFactory callable(PromiseAdapter, Schema, DocumentNode, mixed, mixed, array<mixed>, ?string, callable): ExecutorImplementation
+@phpstan-type ImplementationFactory callable(PromiseAdapter, Schema, DocumentNode, mixed, mixed, array<mixed>, ?string, callable, callable): ExecutorImplementation
+
+@see \GraphQL\Tests\Executor\ExecutorTest
 
 ### GraphQL\Executor\Executor Methods
 
@@ -1267,13 +1496,15 @@ Implements the "Evaluating requests" section of the GraphQL specification.
  * Always returns ExecutionResult and never throws.
  * All errors which occur during operation execution are collected in `$result->errors`.
  *
- * @param mixed                     $rootValue
- * @param mixed                     $contextValue
+ * @param mixed $rootValue
+ * @param mixed $contextValue
  * @param array<string, mixed>|null $variableValues
  *
  * @phpstan-param FieldResolver|null $fieldResolver
  *
  * @api
+ *
+ * @throws InvariantViolation
  */
 static function execute(
     GraphQL\Type\Schema $schema,
@@ -1293,11 +1524,12 @@ static function execute(
  *
  * Useful for async PHP platforms.
  *
- * @param mixed                     $rootValue
- * @param mixed                     $contextValue
+ * @param mixed $rootValue
+ * @param mixed $contextValue
  * @param array<string, mixed>|null $variableValues
  *
  * @phpstan-param FieldResolver|null $fieldResolver
+ * @phpstan-param ArgsMapper|null $argsMapper
  *
  * @api
  */
@@ -1309,9 +1541,16 @@ static function promiseToExecute(
     $contextValue = null,
     ?array $variableValues = null,
     ?string $operationName = null,
-    ?callable $fieldResolver = null
+    ?callable $fieldResolver = null,
+    ?callable $argsMapper = null
 ): GraphQL\Executor\Promise\Promise
 ```
+
+## GraphQL\Executor\ScopedContext
+
+When the object passed as `$contextValue` to GraphQL execution implements this,
+its `clone()` method will be called before passing the context down to a field.
+This allows passing information to child fields in the query tree without affecting sibling or parent fields.
 
 ## GraphQL\Executor\ExecutionResult
 
@@ -1328,14 +1567,16 @@ locations?: array<int, array{line: int, column: int}>,
 path?: array<int, int|string>,
 extensions?: array<string, mixed>
 }
-@phpstan-type SerializableErrors array<int, SerializableError>
+@phpstan-type SerializableErrors list<SerializableError>
 @phpstan-type SerializableResult array{
 data?: array<string, mixed>,
 errors?: SerializableErrors,
 extensions?: array<string, mixed>
 }
 @phpstan-type ErrorFormatter callable(\Throwable): SerializableError
-@phpstan-type ErrorsHandler callable(array<Error> $errors, ErrorFormatter $formatter): SerializableErrors
+@phpstan-type ErrorsHandler callable(list<Error> $errors, ErrorFormatter $formatter): SerializableErrors
+
+@see \GraphQL\Tests\Executor\ExecutionResultTest
 
 ### GraphQL\Executor\ExecutionResult Props
 
@@ -1357,7 +1598,7 @@ public $data;
  *
  * @api
  *
- * @var array<Error>
+ * @var list<Error>
  */
 public $errors;
 
@@ -1540,9 +1781,11 @@ will be created from the provided schema.
 /**
  * Validate a GraphQL query against a schema.
  *
- * @param array<ValidationRule>|null $rules
+ * @param array<ValidationRule>|null $rules Defaults to using all available rules
  *
- * @return array<int, Error>
+ * @throws \Exception
+ *
+ * @return list<Error>
  *
  * @api
  */
@@ -1557,6 +1800,8 @@ static function validate(
 ```php
 /**
  * Returns all global validation rules.
+ *
+ * @throws \InvalidArgumentException
  *
  * @return array<string, ValidationRule>
  *
@@ -1574,6 +1819,8 @@ static function allRules(): array
  * @example DocumentValidator::getRule(GraphQL\Validator\Rules\QueryComplexity::class);
  *
  * @api
+ *
+ * @throws \InvalidArgumentException
  */
 static function getRule(string $name): ?GraphQL\Validator\Rules\ValidationRule
 ```
@@ -1611,6 +1858,8 @@ Also read related docs on [error handling](error-handling.md)
 Class extends standard PHP `\Exception`, so all standard methods of base `\Exception` class
 are available in addition to those listed below.
 
+@see \GraphQL\Tests\Error\ErrorTest
+
 ### GraphQL\Error\Error Methods
 
 ```php
@@ -1635,13 +1884,25 @@ function getLocations(): array
 ```php
 /**
  * Returns an array describing the path from the root value to the field which produced this error.
- * Only included for execution errors.
+ * Only included for execution errors. When fields are aliased, the path includes aliases.
  *
- * @return array<int, int|string>|null
+ * @return list<int|string>|null
  *
  * @api
  */
 function getPath(): ?array
+```
+
+```php
+/**
+ * Returns an array describing the path from the root value to the field which produced this error.
+ * Only included for execution errors. This will never include aliases.
+ *
+ * @return list<int|string>|null
+ *
+ * @api
+ */
+function getUnaliasedPath(): ?array
 ```
 
 ## GraphQL\Error\Warning
@@ -1754,6 +2015,8 @@ and provides tools for error debugging.
 @phpstan-import-type SerializableError from ExecutionResult
 @phpstan-import-type ErrorFormatter from ExecutionResult
 
+@see \GraphQL\Tests\Error\FormattedErrorTest
+
 ### GraphQL\Error\FormattedError Methods
 
 ```php
@@ -1824,6 +2087,8 @@ Or using [ServerConfig](class-reference.md#graphqlserverserverconfig) instance:
 
 See [dedicated section in docs](executing-queries.md#using-server) for details.
 
+@see \GraphQL\Tests\Server\StandardServerTest
+
 ### GraphQL\Server\StandardServer Methods
 
 ```php
@@ -1831,6 +2096,8 @@ See [dedicated section in docs](executing-queries.md#using-server) for details.
  * @param ServerConfig|array<string, mixed> $config
  *
  * @api
+ *
+ * @throws InvariantViolation
  */
 function __construct($config)
 ```
@@ -1849,6 +2116,10 @@ function __construct($config)
  * @param OperationParams|array<OperationParams> $parsedBody
  *
  * @api
+ *
+ * @throws \Exception
+ * @throws InvariantViolation
+ * @throws RequestError
  */
 function handleRequest($parsedBody = null): void
 ```
@@ -1866,6 +2137,10 @@ function handleRequest($parsedBody = null): void
  *
  * @param OperationParams|array<OperationParams> $parsedBody
  *
+ * @throws \Exception
+ * @throws InvariantViolation
+ * @throws RequestError
+ *
  * @return ExecutionResult|array<int, ExecutionResult>|Promise
  *
  * @api
@@ -1879,6 +2154,13 @@ function executeRequest($parsedBody = null)
  *
  * See `executePsrRequest()` if you prefer to create response yourself
  * (e.g. using specific JsonResponse instance of some framework).
+ *
+ * @throws \Exception
+ * @throws \InvalidArgumentException
+ * @throws \JsonException
+ * @throws \RuntimeException
+ * @throws InvariantViolation
+ * @throws RequestError
  *
  * @return ResponseInterface|Promise
  *
@@ -1895,6 +2177,11 @@ function processPsrRequest(
 /**
  * Executes GraphQL operation and returns execution result
  * (or promise when promise adapter is different from SyncPromiseAdapter).
+ *
+ * @throws \Exception
+ * @throws \JsonException
+ * @throws InvariantViolation
+ * @throws RequestError
  *
  * @return ExecutionResult|array<int, ExecutionResult>|Promise
  *
@@ -1926,6 +2213,8 @@ Usage example:
 @phpstan-import-type ErrorsHandler from ExecutionResult
 @phpstan-import-type ErrorFormatter from ExecutionResult
 
+@see \GraphQL\Tests\Server\ServerConfigTest
+
 ### GraphQL\Server\ServerConfig Methods
 
 ```php
@@ -1936,15 +2225,10 @@ Usage example:
  * @param array<string, mixed> $config
  *
  * @api
+ *
+ * @throws InvariantViolation
  */
 static function create(array $config = []): self
-```
-
-```php
-/**
- * @api
- */
-function setSchema(GraphQL\Type\Schema $schema): self
 ```
 
 ```php
@@ -2000,13 +2284,6 @@ function setValidationRules($validationRules): self
 
 ```php
 /**
- * @api
- */
-function setFieldResolver(callable $fieldResolver): self
-```
-
-```php
-/**
  * @phpstan-param PersistedQueryLoader|null $persistedQueryLoader
  *
  * @api
@@ -2034,16 +2311,11 @@ function setDebugFlag(int $debugFlag = 'GraphQL\\Error\\DebugFlag::INCLUDE_DEBUG
 function setQueryBatching(bool $enableBatching): self
 ```
 
-```php
-/**
- * @api
- */
-function setPromiseAdapter(GraphQL\Executor\Promise\PromiseAdapter $promiseAdapter): self
-```
-
 ## GraphQL\Server\Helper
 
 Contains functionality that could be re-used by various server implementations.
+
+@see \GraphQL\Tests\Server\HelperTest
 
 ### GraphQL\Server\Helper Methods
 
@@ -2096,7 +2368,7 @@ function parseRequestParams(string $method, array $bodyParams, array $queryParam
  * Checks validity of OperationParams extracted from HTTP request and returns an array of errors
  * if params are invalid (or empty array when params are valid).
  *
- * @return array<int, RequestError>
+ * @return list<RequestError>
  *
  * @api
  */
@@ -2107,6 +2379,9 @@ function validateOperationParams(GraphQL\Server\OperationParams $params): array
 /**
  * Executes GraphQL operation with given server configuration and returns execution result
  * (or promise when promise adapter is different from SyncPromiseAdapter).
+ *
+ * @throws \Exception
+ * @throws InvariantViolation
  *
  * @return ExecutionResult|Promise
  *
@@ -2122,6 +2397,9 @@ function executeOperation(GraphQL\Server\ServerConfig $config, GraphQL\Server\Op
  *
  * @param array<OperationParams> $operations
  *
+ * @throws \Exception
+ * @throws InvariantViolation
+ *
  * @return array<int, ExecutionResult>|Promise
  *
  * @api
@@ -2136,6 +2414,8 @@ function executeBatch(GraphQL\Server\ServerConfig $config, array $operations)
  * @param Promise|ExecutionResult|array<ExecutionResult> $result
  *
  * @api
+ *
+ * @throws \JsonException
  */
 function sendResponse($result): void
 ```
@@ -2158,6 +2438,10 @@ function parsePsrRequest(Psr\Http\Message\RequestInterface $request)
  * Converts query execution result to PSR-7 response.
  *
  * @param Promise|ExecutionResult|array<ExecutionResult> $result
+ *
+ * @throws \InvalidArgumentException
+ * @throws \JsonException
+ * @throws \RuntimeException
  *
  * @return Promise|ResponseInterface
  *
@@ -2268,6 +2552,7 @@ Build instance of @see \GraphQL\Type\Schema out of schema language definition (s
 See [schema definition language docs](schema-definition-language.md) for details.
 
 @phpstan-import-type TypeConfigDecorator from ASTDefinitionBuilder
+@phpstan-import-type FieldConfigDecorator from ASTDefinitionBuilder
 
 @phpstan-type BuildSchemaOptions array{
 assumeValid?: bool,
@@ -2286,6 +2571,8 @@ assumeValidSDL?: bool
 
   Default: false
 
+@see \GraphQL\Tests\Utils\BuildSchemaTest
+
 ### GraphQL\Utils\BuildSchema Methods
 
 ```php
@@ -2296,14 +2583,26 @@ assumeValidSDL?: bool
  * @param DocumentNode|Source|string $source
  *
  * @phpstan-param TypeConfigDecorator|null $typeConfigDecorator
+ * @phpstan-param FieldConfigDecorator|null $fieldConfigDecorator
  *
  * @param array<string, bool> $options
  *
  * @phpstan-param BuildSchemaOptions $options
  *
  * @api
+ *
+ * @throws \Exception
+ * @throws \ReflectionException
+ * @throws Error
+ * @throws InvariantViolation
+ * @throws SyntaxError
  */
-static function build($source, ?callable $typeConfigDecorator = null, array $options = []): GraphQL\Type\Schema
+static function build(
+    $source,
+    ?callable $typeConfigDecorator = null,
+    array $options = [],
+    ?callable $fieldConfigDecorator = null
+): GraphQL\Type\Schema
 ```
 
 ```php
@@ -2316,19 +2615,24 @@ static function build($source, ?callable $typeConfigDecorator = null, array $opt
  * has no resolve methods, so execution will use default resolvers.
  *
  * @phpstan-param TypeConfigDecorator|null $typeConfigDecorator
+ * @phpstan-param FieldConfigDecorator|null $fieldConfigDecorator
  *
  * @param array<string, bool> $options
  *
  * @phpstan-param BuildSchemaOptions $options
  *
- * @throws Error
- *
  * @api
+ *
+ * @throws \Exception
+ * @throws \ReflectionException
+ * @throws Error
+ * @throws InvariantViolation
  */
 static function buildAST(
     GraphQL\Language\AST\DocumentNode $ast,
     ?callable $typeConfigDecorator = null,
-    array $options = []
+    array $options = [],
+    ?callable $fieldConfigDecorator = null
 ): GraphQL\Type\Schema
 ```
 
@@ -2363,6 +2667,9 @@ Various utilities dealing with AST.
  * @param array<string, mixed> $node
  *
  * @api
+ *
+ * @throws \JsonException
+ * @throws InvariantViolation
  */
 static function fromArray(array $node): GraphQL\Language\AST\Node
 ````
@@ -2399,6 +2706,10 @@ static function toArray(GraphQL\Language\AST\Node $node): array
  *
  * @param mixed $value
  * @param InputType&Type $type
+ *
+ * @throws \JsonException
+ * @throws InvariantViolation
+ * @throws SerializationError
  *
  * @return (ValueNode&Node)|null
  *
@@ -2523,6 +2834,8 @@ sortInputFields?: bool,
 sortTypes?: bool,
 }
 
+@see \GraphQL\Tests\Utils\SchemaPrinterTest
+
 ### GraphQL\Utils\SchemaPrinter Methods
 
 ```php
@@ -2532,6 +2845,11 @@ sortTypes?: bool,
  * @phpstan-param Options $options
  *
  * @api
+ *
+ * @throws \JsonException
+ * @throws Error
+ * @throws InvariantViolation
+ * @throws SerializationError
  */
 static function doPrint(GraphQL\Type\Schema $schema, array $options = []): string
 ```
@@ -2543,6 +2861,11 @@ static function doPrint(GraphQL\Type\Schema $schema, array $options = []): strin
  * @phpstan-param Options $options
  *
  * @api
+ *
+ * @throws \JsonException
+ * @throws Error
+ * @throws InvariantViolation
+ * @throws SerializationError
  */
 static function printIntrospectionSchema(GraphQL\Type\Schema $schema, array $options = []): string
 ```

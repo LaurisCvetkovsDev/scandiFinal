@@ -1,39 +1,37 @@
 <?php
-require_once __DIR__ . '/../models/Price.php';
+
+namespace App\Repositories;
+
+use App\Config\Database;
+use App\Entities\Price;
+use PDO;
 
 class PriceRepository
 {
-    private PDO $conn;
+    private PDO $db;
 
-    public function __construct(PDO $conn)
+    public function __construct()
     {
-        $this->conn = $conn;
+        $this->db = Database::getInstance();
     }
 
-    public function findByProductId(string $productId): array
+    public function getByProductId(int $productId): array
     {
-        $stmt = $this->conn->prepare("SELECT * FROM product_prices WHERE product_id = ?");
+        $stmt = $this->db->prepare("SELECT * FROM prices WHERE product_id = ?");
         $stmt->execute([$productId]);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $prices = [];
-        foreach ($rows as $row) {
+
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $prices[] = new Price(
-                $row['id'],
-                $row['product_id'],
-                $row['currency_label'],
-                $row['currency_symbol'],
-                $row['amount']
+                id: $row['id'],
+                product_id: $row['product_id'],
+                currency_label: $row['currency_label'],
+                currency_symbol: $row['currency_symbol'],
+                amount: $row['amount'],
             );
         }
+
         return $prices;
     }
-    public function getByProductId($productId)
-    {
-        $stmt = $this->conn->prepare('SELECT * FROM product_prices WHERE product_id = ?');
-        $stmt->execute([$productId]);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
-    }
 }
-
-?>

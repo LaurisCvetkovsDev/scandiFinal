@@ -25,9 +25,10 @@ class BooleanType extends ScalarType
         return (bool) $value;
     }
 
+    /** @throws Error */
     public function parseValue($value): bool
     {
-        if (\is_bool($value)) {
+        if (is_bool($value)) {
             return $value;
         }
 

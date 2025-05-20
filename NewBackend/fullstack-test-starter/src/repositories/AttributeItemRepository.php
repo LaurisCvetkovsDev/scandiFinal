@@ -1,23 +1,28 @@
 <?php
-require_once __DIR__ . '/../models/AttributeItem.php';
+
+namespace App\Repositories;
+
+use App\Config\Database;
+use App\Entities\AttributeItem;
+use PDO;
 
 class AttributeItemRepository
 {
-    private PDO $conn;
+    private PDO $db;
 
-    public function __construct(PDO $conn)
+    public function __construct()
     {
-        $this->conn = $conn;
+        $this->db = Database::getInstance();
     }
 
-    public function findByAttrIdAndProductId(string $attrId, string $productId): array
+    public function getByProductId(int $productId): array
     {
-        $stmt = $this->conn->prepare("SELECT * FROM attribute_items WHERE attr_id = ? AND product_id = ?");
-        $stmt->execute([$attrId, $productId]);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $stmt = $this->db->prepare("SELECT * FROM product_attributes WHERE product_id = ?");
+        $stmt->execute([$productId]);
 
-        $items = [];
-        foreach ($rows as $row) {
+        $prices = [];
+
+        while ($row = $stmt->fetch(mode: PDO::FETCH_ASSOC)) {
             $items[] = new AttributeItem(
                 $row['id'],
                 $row['product_id'],
@@ -27,9 +32,7 @@ class AttributeItemRepository
                 $row['value']
             );
         }
+
         return $items;
     }
 }
-
-
-?>

@@ -6,6 +6,7 @@ use Amp\Deferred;
 use Amp\Failure;
 use Amp\Promise as AmpPromise;
 use Amp\Success;
+use GraphQL\Error\InvariantViolation;
 use GraphQL\Executor\Promise\Promise;
 use GraphQL\Executor\Promise\PromiseAdapter;
 
@@ -18,11 +19,13 @@ class AmpPromiseAdapter implements PromiseAdapter
         return $value instanceof AmpPromise;
     }
 
+    /** @throws InvariantViolation */
     public function convertThenable($thenable): Promise
     {
         return new Promise($thenable, $this);
     }
 
+    /** @throws InvariantViolation */
     public function then(Promise $promise, ?callable $onFulfilled = null, ?callable $onRejected = null): Promise
     {
         $deferred = new Deferred();
@@ -39,13 +42,14 @@ class AmpPromiseAdapter implements PromiseAdapter
         };
 
         $adoptedPromise = $promise->adoptedPromise;
-        \assert($adoptedPromise instanceof AmpPromise);
+        assert($adoptedPromise instanceof AmpPromise);
 
         $adoptedPromise->onResolve($onResolve);
 
         return new Promise($deferred->promise(), $this);
     }
 
+    /** @throws InvariantViolation */
     public function create(callable $resolver): Promise
     {
         $deferred = new Deferred();
@@ -62,6 +66,10 @@ class AmpPromiseAdapter implements PromiseAdapter
         return new Promise($deferred->promise(), $this);
     }
 
+    /**
+     * @throws \Error
+     * @throws InvariantViolation
+     */
     public function createFulfilled($value = null): Promise
     {
         $promise = new Success($value);
@@ -69,6 +77,7 @@ class AmpPromiseAdapter implements PromiseAdapter
         return new Promise($promise, $this);
     }
 
+    /** @throws InvariantViolation */
     public function createRejected(\Throwable $reason): Promise
     {
         $promise = new Failure($reason);
@@ -76,6 +85,10 @@ class AmpPromiseAdapter implements PromiseAdapter
         return new Promise($promise, $this);
     }
 
+    /**
+     * @throws \Error
+     * @throws InvariantViolation
+     */
     public function all(iterable $promisesOrValues): Promise
     {
         /** @var array<AmpPromise<mixed>> $promises */
@@ -83,7 +96,7 @@ class AmpPromiseAdapter implements PromiseAdapter
         foreach ($promisesOrValues as $key => $item) {
             if ($item instanceof Promise) {
                 $ampPromise = $item->adoptedPromise;
-                \assert($ampPromise instanceof AmpPromise);
+                assert($ampPromise instanceof AmpPromise);
                 $promises[$key] = $ampPromise;
             } elseif ($item instanceof AmpPromise) {
                 $promises[$key] = $item;
@@ -94,12 +107,12 @@ class AmpPromiseAdapter implements PromiseAdapter
 
         all($promises)->onResolve(static function (?\Throwable $reason, ?array $values) use ($promisesOrValues, $deferred): void {
             if ($reason === null) {
-                \assert(\is_array($values), 'Either $reason or $values must be passed');
+                assert(is_array($values), 'Either $reason or $values must be passed');
 
                 $promisesOrValuesArray = is_array($promisesOrValues)
                     ? $promisesOrValues
                     : iterator_to_array($promisesOrValues);
-                $resolvedValues = \array_replace($promisesOrValuesArray, $values);
+                $resolvedValues = array_replace($promisesOrValuesArray, $values);
                 $deferred->resolve($resolvedValues);
 
                 return;
@@ -113,7 +126,7 @@ class AmpPromiseAdapter implements PromiseAdapter
 
     /**
      * @template TArgument
-     * @template TResult
+     * @template TResult of AmpPromise<mixed>
      *
      * @param Deferred<TResult> $deferred
      * @param callable(TArgument): TResult $callback

@@ -19,6 +19,7 @@ class SyncPromiseAdapter implements PromiseAdapter
         return $value instanceof SyncPromise;
     }
 
+    /** @throws InvariantViolation */
     public function convertThenable($thenable): Promise
     {
         if (! $thenable instanceof SyncPromise) {
@@ -31,14 +32,19 @@ class SyncPromiseAdapter implements PromiseAdapter
         return new Promise($thenable, $this);
     }
 
+    /** @throws InvariantViolation */
     public function then(Promise $promise, ?callable $onFulfilled = null, ?callable $onRejected = null): Promise
     {
         $adoptedPromise = $promise->adoptedPromise;
-        \assert($adoptedPromise instanceof SyncPromise);
+        assert($adoptedPromise instanceof SyncPromise);
 
         return new Promise($adoptedPromise->then($onFulfilled, $onRejected), $this);
     }
 
+    /**
+     * @throws \Exception
+     * @throws InvariantViolation
+     */
     public function create(callable $resolver): Promise
     {
         $promise = new SyncPromise();
@@ -55,6 +61,10 @@ class SyncPromiseAdapter implements PromiseAdapter
         return new Promise($promise, $this);
     }
 
+    /**
+     * @throws \Exception
+     * @throws InvariantViolation
+     */
     public function createFulfilled($value = null): Promise
     {
         $promise = new SyncPromise();
@@ -62,6 +72,10 @@ class SyncPromiseAdapter implements PromiseAdapter
         return new Promise($promise->resolve($value), $this);
     }
 
+    /**
+     * @throws \Exception
+     * @throws InvariantViolation
+     */
     public function createRejected(\Throwable $reason): Promise
     {
         $promise = new SyncPromise();
@@ -69,13 +83,17 @@ class SyncPromiseAdapter implements PromiseAdapter
         return new Promise($promise->reject($reason), $this);
     }
 
+    /**
+     * @throws \Exception
+     * @throws InvariantViolation
+     */
     public function all(iterable $promisesOrValues): Promise
     {
         $all = new SyncPromise();
 
-        $total = \is_array($promisesOrValues)
-            ? \count($promisesOrValues)
-            : \iterator_count($promisesOrValues);
+        $total = is_array($promisesOrValues)
+            ? count($promisesOrValues)
+            : iterator_count($promisesOrValues);
         $count = 0;
         $result = [];
 
@@ -110,6 +128,8 @@ class SyncPromiseAdapter implements PromiseAdapter
     /**
      * Synchronously wait when promise completes.
      *
+     * @throws InvariantViolation
+     *
      * @return mixed
      */
     public function wait(Promise $promise)
@@ -118,7 +138,7 @@ class SyncPromiseAdapter implements PromiseAdapter
         $taskQueue = SyncPromise::getQueue();
 
         $syncPromise = $promise->adoptedPromise;
-        \assert($syncPromise instanceof SyncPromise);
+        assert($syncPromise instanceof SyncPromise);
 
         while (
             $syncPromise->state === SyncPromise::PENDING
@@ -139,17 +159,9 @@ class SyncPromiseAdapter implements PromiseAdapter
         throw new InvariantViolation('Could not resolve promise');
     }
 
-    /**
-     * Execute just before starting to run promise completion.
-     */
-    protected function beforeWait(Promise $promise): void
-    {
-    }
+    /** Execute just before starting to run promise completion. */
+    protected function beforeWait(Promise $promise): void {}
 
-    /**
-     * Execute while running promise completion.
-     */
-    protected function onWait(Promise $promise): void
-    {
-    }
+    /** Execute while running promise completion. */
+    protected function onWait(Promise $promise): void {}
 }

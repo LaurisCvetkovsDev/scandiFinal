@@ -2,6 +2,7 @@
 
 namespace GraphQL\Language\AST;
 
+use GraphQL\Error\InvariantViolation;
 use GraphQL\Utils\AST;
 
 /**
@@ -29,9 +30,7 @@ class NodeList implements \ArrayAccess, \IteratorAggregate, \Countable
         $this->nodes = $nodes;
     }
 
-    /**
-     * @param int|string $offset
-     */
+    /** @param int|string $offset */
     #[\ReturnTypeWillChange]
     public function offsetExists($offset): bool
     {
@@ -48,7 +47,7 @@ class NodeList implements \ArrayAccess, \IteratorAggregate, \Countable
     {
         $item = $this->nodes[$offset];
 
-        if (\is_array($item)) {
+        if (is_array($item)) {
             // @phpstan-ignore-next-line not really possible to express the correctness of this in PHP
             return $this->nodes[$offset] = AST::fromArray($item);
         }
@@ -57,15 +56,18 @@ class NodeList implements \ArrayAccess, \IteratorAggregate, \Countable
     }
 
     /**
-     * @param int|string|null           $offset
+     * @param int|string|null $offset
      * @param Node|array<string, mixed> $value
      *
      * @phpstan-param T|array<string, mixed> $value
+     *
+     * @throws \JsonException
+     * @throws InvariantViolation
      */
     #[\ReturnTypeWillChange]
     public function offsetSet($offset, $value): void
     {
-        if (\is_array($value)) {
+        if (is_array($value)) {
             /** @phpstan-var T $value */
             $value = AST::fromArray($value);
         }
@@ -80,9 +82,7 @@ class NodeList implements \ArrayAccess, \IteratorAggregate, \Countable
         $this->nodes[$offset] = $value;
     }
 
-    /**
-     * @param int|string $offset
-     */
+    /** @param int|string $offset */
     #[\ReturnTypeWillChange]
     public function offsetUnset($offset): void
     {
@@ -98,7 +98,7 @@ class NodeList implements \ArrayAccess, \IteratorAggregate, \Countable
 
     public function count(): int
     {
-        return \count($this->nodes);
+        return count($this->nodes);
     }
 
     /**
@@ -111,7 +111,7 @@ class NodeList implements \ArrayAccess, \IteratorAggregate, \Countable
     public function splice(int $offset, int $length, $replacement = null): NodeList
     {
         return new NodeList(
-            \array_splice($this->nodes, $offset, $length, $replacement)
+            array_splice($this->nodes, $offset, $length, $replacement)
         );
     }
 
@@ -122,16 +122,14 @@ class NodeList implements \ArrayAccess, \IteratorAggregate, \Countable
      */
     public function merge(iterable $list): NodeList
     {
-        if (! \is_array($list)) {
-            $list = \iterator_to_array($list);
+        if (! is_array($list)) {
+            $list = iterator_to_array($list);
         }
 
-        return new NodeList(\array_merge($this->nodes, $list));
+        return new NodeList(array_merge($this->nodes, $list));
     }
 
-    /**
-     * Resets the keys of the stored nodes to contiguous numeric indexes.
-     */
+    /** Resets the keys of the stored nodes to contiguous numeric indexes. */
     public function reindex(): void
     {
         $this->nodes = array_values($this->nodes);
@@ -140,12 +138,16 @@ class NodeList implements \ArrayAccess, \IteratorAggregate, \Countable
     /**
      * Returns a clone of this instance and all its children, except Location $loc.
      *
+     * @throws \JsonException
+     * @throws InvariantViolation
+     *
      * @return static<T>
      */
     public function cloneDeep(): self
     {
-        /** @var static<T> $cloned */
-        $cloned = new static([]);
+        /** @var array<T> $empty */
+        $empty = [];
+        $cloned = new static($empty);
         foreach ($this->getIterator() as $key => $node) {
             $cloned[$key] = $node->cloneDeep();
         }

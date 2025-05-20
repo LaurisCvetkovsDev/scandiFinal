@@ -1,37 +1,35 @@
 <?php
-require_once __DIR__ . '/../models/Image.php';
+
+namespace App\Repositories;
+
+use App\Config\Database;
+use App\Entities\Image;
+use PDO;
 
 class GalleryRepository
 {
-    private PDO $conn;
+    private PDO $db;
 
-    public function __construct(PDO $conn)
+    public function __construct()
     {
-        $this->conn = $conn;
+        $this->db = Database::getInstance();
     }
 
-    public function findByProductId(string $productId): array
+    public function getByProductId(int $productId): array
     {
-        $stmt = $this->conn->prepare("SELECT * FROM product_gallery WHERE product_id = ?");
+        $stmt = $this->db->prepare("SELECT * FROM product_gallery WHERE product_id = ?");
         $stmt->execute([$productId]);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $images = [];
-        foreach ($rows as $row) {
+
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $images[] = new Image(
                 $row['id'],
                 $row['image_url'],
                 $row['product_id']
             );
         }
+
         return $images;
     }
-    public function getByProductId($productId)
-    {
-        $stmt = $this->conn->prepare('SELECT * FROM product_gallery WHERE product_id = :productId');
-        $stmt->execute(['productId' => $productId]);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
-    }
 }
-
-?>

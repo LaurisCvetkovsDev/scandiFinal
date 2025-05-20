@@ -12,7 +12,6 @@ if (strtolower($_SERVER['REQUEST_METHOD']) == 'options') {
     exit();
 }
 
-require_once __DIR__ . '/../Database.php';
 require_once __DIR__ . '/../repositories/AttributeRepository.php';
 require_once __DIR__ . '/../repositories/ProductRepository.php';
 require_once __DIR__ . '/../repositories/CategoryRepository.php';
